@@ -1,0 +1,22 @@
+{
+  "name": "cucumber_disease_model_20260502_232929.pth",
+  "classes": [
+    "Anthracnose",
+    "Bacterial Wilt",
+    "Belly Rot",
+    "Downy Mildew",
+    "Fresh Cucumber",
+    "Fresh Leaf",
+    "Gummy Stem Blight",
+    "Pythium Fruit Rot"
+  ],
+  "num_classes": 8,
+  "accuracy": 0.8293250581846393,
+  "image_size": [
+    224,
+    224
+  ],
+  "epoch": 1,
+  "timestamp": "20260502_232929",
+  "framework": "pytorch"
+}
