@@ -12,7 +12,8 @@ def create_app():
     app = Flask(__name__)
     
     # FIXED: Complete CORS configuration with proper closing
-    CORS(app, origins=["http://localhost:3000", "http://localhost:5173"])
+    CORS(app, origins=["http://localhost:3000", "http://localhost:5173",
+    "http://127.0.0.1:5173"])
     
     # Load configuration
     app.config.from_object(Config)
