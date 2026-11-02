@@ -1,5 +1,6 @@
 # .gitignore - Python
 venv/
+.venv/
 env/
 ENV/
 env.bak/

@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, send_file
 import os
-import random
+import re
+import logging
 from datetime import datetime
 import openai
 from werkzeug.utils import secure_filename
@@ -8,10 +9,12 @@ from config import Config
 from utils.file_handling import save_uploaded_file, cleanup_old_files
 from utils.image_processing import ImageProcessor
 from utils.model_inference import TrainedModelService
+from utils.roboflow_pest_inference import RoboflowPestService
 import cv2
 
 
 detection_bp = Blueprint('detection', __name__)
+logger = logging.getLogger(__name__)
 
 @detection_bp.route('/detect', methods=['POST'])
 def detect_disease():
@@ -82,8 +85,7 @@ def detect_disease():
 @detection_bp.route('/pest-detect', methods=['POST'])
 def detect_pest():
     """
-    Lightweight pest scan endpoint that does not affect the disease model.
-    It randomly selects one of four cucumber pests for demonstration purposes.
+    Run the Roboflow cucumber pest detection model.
     """
     try:
         if 'image' not in request.files:
@@ -110,48 +112,22 @@ def detect_pest():
 
         cleanup_old_files()
 
-        pests = ['Aphids', 'Whiteflies', 'Spider Mites', 'Thrips']
-        pest_recommendations = {
-            'Aphids': [
-                'Spray neem oil or insecticidal soap on the affected leaves.',
-                'Remove heavily infested growth and improve airflow around the plant.'
-            ],
-            'Whiteflies': [
-                'Use yellow sticky traps and wash the undersides of leaves.',
-                'Apply horticultural oil or insecticidal soap to reduce the population.'
-            ],
-            'Spider Mites': [
-                'Rinse leaves with water and increase humidity around the plant.',
-                'Apply miticide or insecticidal soap if the infestation is severe.'
-            ],
-            'Thrips': [
-                'Remove damaged leaves and use blue sticky traps to monitor them.',
-                'Apply neem oil or spinosad-based treatment for control.'
-            ]
-        }
-        selected_pest = random.choice(pests)
-        confidence = round(0.72 + (random.random() * 0.24), 2)
+        prediction = RoboflowPestService.predict(filepath)
 
         return jsonify({
             'success': True,
             'filename': filename,
-            'prediction': {
-                'pest': selected_pest,
-                'confidence': confidence,
-                'available_pests': pests,
-                'recommendations': pest_recommendations[selected_pest],
-                'mode': 'random_pest_scan',
-                'message': 'Pest scan completed using a lightweight fallback classifier.'
-            },
+            'prediction': prediction,
             'image_url': f'/api/uploads/{filename}',
-            'message': 'Pest scan completed successfully.'
+            'message': 'Pest scan completed using Roboflow.'
         })
 
     except Exception as e:
+        logger.exception("Roboflow pest inference failed")
         return jsonify({
             'success': False,
             'error': f'Pest scan failed: {str(e)}'
-        }), 500
+        }), 502
 
 
 @detection_bp.route('/batch-detect', methods=['POST'])
@@ -346,6 +322,221 @@ Which disease would you like to know more about?"""
 
 **Always**: Test on a few leaves first before full application!"""
         },
+        'aphids': {
+            'keywords': ['aphid', 'aphids'],
+            'response': """🐜 **Aphid Treatment:**
+
+1. Spray the undersides of leaves and new growth with a strong stream of water.
+2. Prune heavily infested tips and dispose of them away from the compost.
+3. Use yellow sticky traps and protect ladybugs and other beneficial insects.
+4. If the infestation continues, use insecticidal soap or another product labelled for aphids and cucumbers. Follow the label and test a small area first.
+5. Recheck the plant every few days because aphids reproduce quickly.
+
+Sticky honeydew, curled leaves, and ants may also indicate aphids. """
+        },
+        'pests': {
+            'keywords': ['pest', 'pests', 'insect', 'insects', 'bug', 'bugs'],
+            'response': """🐛 **Cucumber Pest Treatment:**
+
+• Inspect the undersides of leaves for aphids, whiteflies, thrips, and spider mites.
+• Look for feeding holes and striped or spotted cucumber beetles.
+• Remove visible pests by hand or rinse leaves with water.
+• Use sticky traps, row covers, and weed control to reduce pest pressure.
+• Protect beneficial insects and use a labelled treatment only when monitoring confirms an infestation.
+
+Tell me what the insect looks like or share a clear photo so I can narrow it down."""
+        },
+        'whiteflies': {
+            'keywords': ['whitefly', 'whiteflies', 'white fly', 'white flies'],
+            'response': """🪰 **Whitefly Treatment:**
+
+• Check the undersides of leaves for tiny white insects, pale nymphs, and sticky honeydew.
+• Use yellow sticky traps to monitor adults and rinse leaf undersides with water.
+• Remove weeds and badly infested leaves, but keep ladybugs and other predators.
+• If pressure remains high, use a labelled insecticidal soap or horticultural oil and repeat only as directed on the label.
+• Recheck new growth every few days."""
+        },
+        'thrips': {
+            'keywords': ['thrips', 'silver streaks', 'silvery streaks'],
+            'response': """🦟 **Thrips Treatment:**
+
+• Look for silvery scars, black specks, and distorted young leaves or flowers.
+• Remove weeds and damaged plant material and use blue or yellow sticky traps.
+• Rinse foliage gently and protect predatory mites and other beneficial insects.
+• Use only a product labelled for thrips and cucumbers when monitoring confirms an infestation; rotate approved modes of action according to the label."""
+        },
+        'spider_mites': {
+            'keywords': ['spider mite', 'spider mites', 'mite', 'mites', 'webbing'],
+            'response': """🕷️ **Spider Mite Treatment:**
+
+• Check for fine webbing and tiny pale speckles, especially on lower leaf surfaces.
+• Isolate the plant and rinse the undersides of leaves with water.
+• Reduce dusty, very dry conditions without keeping foliage wet overnight.
+• Encourage predatory mites and avoid broad-spectrum insecticides, which can worsen outbreaks.
+• Use a labelled miticide or horticultural oil only if the infestation persists and the label permits use on cucumbers."""
+        },
+        'cucumber_beetles': {
+            'keywords': ['cucumber beetle', 'cucumber beetles', 'striped beetle', 'spotted beetle'],
+            'response': """🪲 **Cucumber Beetle Treatment:**
+
+• Hand-pick adults or vacuum them carefully from the plant.
+• Protect young plants with row covers, removing covers during flowering for pollination.
+• Remove weeds and plant debris where beetles shelter.
+• Monitor for feeding holes and wilting because beetles can spread bacterial wilt.
+• Use a labelled treatment only when damage is increasing and follow pollinator-safety directions."""
+        },
+        'cutworms': {
+            'keywords': ['cutworm', 'cutworms', 'seedling cut', 'cut at the soil'],
+            'response': """🐛 **Cutworm Treatment:**
+
+• Inspect around the soil line after dark and hand-remove caterpillars.
+• Clear weeds and debris before planting.
+• Place a paper or cardboard collar around each seedling, pushed slightly into the soil.
+• Keep the growing area clean and check young plants daily.
+• Use a labelled product only for confirmed damage and follow harvest and safety intervals."""
+        },
+        'downy_mildew': {
+            'keywords': ['downy mildew', 'purple mold', 'gray mold underneath', 'grey mold underneath'],
+            'response': """🍃 **Downy Mildew Treatment:**
+
+• Confirm yellow angular spots on top of leaves and gray-purple growth underneath.
+• Remove badly affected leaves and bag them; do not compost suspected disease.
+• Improve spacing and airflow and water at soil level.
+• Avoid working among wet plants to reduce spread.
+• Use a fungicide labelled for downy mildew on cucumbers as soon as possible; follow the label and rotate product groups as directed."""
+        },
+        'powdery_mildew': {
+            'keywords': ['powdery mildew', 'white powder', 'white coating', 'flour on leaves'],
+            'response': """🌿 **Powdery Mildew Treatment:**
+
+• Remove the most heavily affected leaves and disinfect tools.
+• Improve airflow, reduce crowding, and avoid excessive nitrogen fertilizer.
+• Keep plants adequately watered at the soil, but avoid wetting foliage overnight.
+• Use a labelled sulfur, biological, or other approved fungicide early; test products on a small area first and follow the label."""
+        },
+        'angular_leaf_spot': {
+            'keywords': ['angular leaf spot', 'water soaked spots', 'water-soaked spots', 'yellow halos'],
+            'response': """🟤 **Angular Leaf Spot Treatment:**
+
+• Remove leaves with angular, water-soaked lesions and yellow halos.
+• Avoid overhead irrigation and do not handle plants while wet.
+• Disinfect tools and remove infected debris; do not save seed from affected plants.
+• Improve airflow and use resistant varieties when available.
+• A labelled copper product may help suppress bacterial spread, but it will not restore damaged tissue."""
+        },
+        'anthracnose': {
+            'keywords': ['anthracnose', 'sunken lesions', 'pink spores', 'fruit rot'],
+            'response': """🟠 **Anthracnose Treatment:**
+
+• Remove infected leaves and fruit and dispose of them away from the garden.
+• Keep foliage and fruit dry, improve airflow, and avoid overhead irrigation.
+• Rotate cucurbit crops and clean plant debris after harvest.
+• Use a labelled fungicide early when anthracnose is confirmed and follow the harvest interval on the label."""
+        },
+        'bacterial_wilt': {
+            'keywords': ['bacterial wilt', 'sudden wilt', 'sticky ooze', 'wilting vine'],
+            'response': """⚠️ **Bacterial Wilt Treatment:**
+
+• There is no reliable cure for an infected cucumber plant.
+• Remove and bag the whole plant promptly; do not compost it.
+• Control cucumber beetles, which commonly spread the bacteria.
+• Disinfect tools and wash hands before touching healthy plants.
+• Use resistant varieties and row covers next season."""
+        },
+        'mosaic_virus': {
+            'keywords': ['mosaic virus', 'mosaic', 'mottled leaves', 'virus'],
+            'response': """🧬 **Mosaic Virus Management:**
+
+• Mottled leaves, distortion, and stunting can indicate a virus, but symptoms can overlap with other stress.
+• Remove and bag confirmed infected plants because there is no curative fungicide.
+• Control aphids and remove weeds that can host the virus.
+• Disinfect tools and wash hands; avoid spreading sap between plants.
+• Use certified seed and resistant varieties where available."""
+        },
+        'yellow_leaves': {
+            'keywords': ['yellow leaves', 'leaves turning yellow', 'yellowing leaves'],
+            'response': """💛 **Yellow Leaves:**
+
+Yellowing can result from overwatering, nutrient stress, aging leaves, spider mites, downy mildew, or root problems.
+
+• Check soil moisture and drainage before adding fertilizer.
+• Inspect both sides of leaves for pests and lesions.
+• Look for a pattern: older leaves, new leaves, veins, or scattered spots.
+• Improve airflow and water at soil level.
+
+Tell me whether the yellowing starts on old or new leaves and whether spots, insects, or webbing are present."""
+        },
+        'leaf_holes': {
+            'keywords': ['holes in leaves', 'holes on leaves', 'chewed leaves', 'eaten leaves', 'feeding holes'],
+            'response': """🕳️ **Holes or Chewed Leaves:**
+
+• Inspect the plant at dusk and check under leaves for beetles, caterpillars, slugs, or eggs.
+• Hand-pick visible pests and remove nearby weeds and debris.
+• Use row covers on young plants and traps where appropriate.
+• Do not spray based on holes alone; identify the pest first so beneficial insects are not harmed.
+• Share a photo of the damage and the insect if you see one."""
+        },
+        'leaf_curling': {
+            'keywords': ['curling leaves', 'curled leaves', 'leaves curling', 'twisted leaves'],
+            'response': """🔄 **Curling Leaves:**
+
+Possible causes include aphids, whiteflies, thrips, heat or drought stress, herbicide drift, and viral disease.
+
+• Inspect new growth and leaf undersides for insects and honeydew.
+• Check soil moisture and protect the plant from extreme heat.
+• Remove badly damaged leaves and avoid applying unlabelled sprays.
+• If curling is paired with mosaic patterns or severe stunting, remove the plant and prevent sap spread."""
+        },
+        'root_rot': {
+            'keywords': ['root rot', 'rotting roots', 'roots are brown', 'waterlogged'],
+            'response': """🌱 **Possible Root Rot:**
+
+• Check whether soil stays wet and whether roots are brown, soft, or foul-smelling.
+• Improve drainage, reduce watering, and do not let containers sit in water.
+• Remove severely affected plants and sanitize containers and tools.
+• Use clean, well-draining growing media and avoid planting too deeply.
+• Yellowing and wilting can have several causes, so confirm the roots before treating."""
+        },
+        'organic_treatment': {
+            'keywords': ['organic treatment', 'organic option', 'natural treatment', 'home remedy', 'neem oil'],
+            'response': """🌿 **Lower-Risk Treatment Options:**
+
+• Start with hand removal, water rinsing, pruning, traps, row covers, sanitation, and beneficial insects.
+• Insecticidal soap or horticultural oil can help some soft-bodied pests when the label permits.
+• Biological fungicides may help suppress some diseases but do not cure advanced infections.
+• Test any product on a small area first, spray according to the label, and avoid spraying flowers or active pollinators.
+• Natural does not automatically mean safe; never mix household products or use an unlabelled recipe on edible crops."""
+        },
+        'spray_safety': {
+            'keywords': ['safe pesticide', 'safe spray', 'how much pesticide', 'mix pesticide', 'spray leaves'],
+            'response': """🧴 **Spray Safety:**
+
+• Identify the pest or disease before spraying.
+• Use only a product labelled for cucumbers and the target problem.
+• Follow the label for dose, protective equipment, weather, re-entry, and harvest interval.
+• Never mix products unless the label specifically permits it.
+• Avoid windy or very hot conditions and protect bees and beneficial insects.
+• Do not use household cleaners, fuels, or unlabelled chemicals on edible plants."""
+        },
+        'disease_spread': {
+            'keywords': ['spreading', 'spread quickly', 'stop spreading', 'contagious', 'infect other plants'],
+            'response': """🚧 **Stopping Spread:**
+
+• Isolate the affected plant when possible.
+• Remove infected leaves or the whole plant when bacterial or viral disease is suspected.
+• Bag diseased material and do not compost it.
+• Water at soil level, improve airflow, and avoid working among wet plants.
+• Disinfect pruners between plants and wash hands.
+• Control insect vectors such as aphids and cucumber beetles."""
+        },
+        'diagnosis_help': {
+            'keywords': ['what disease', 'identify disease', 'diagnose', 'is this a disease', 'what is wrong'],
+            'response': """🔎 **For Better Identification:**
+
+Please provide the plant age, affected part, first symptom, speed of spread, recent weather, watering pattern, and a clear photo of the whole plant plus close-ups of both leaf surfaces.
+
+I can compare likely disease, pest, nutrient, and watering causes, but symptoms alone cannot confirm a diagnosis. Do not spray until the likely cause is narrowed down."""
+        },
         'symptom': {
             'keywords': ['symptom', 'sign', 'look like', 'appearance', 'spot', 'yellow', 'wilt', 'mold'],
             'response': """🔍 **Disease Symptoms to Look For:**
@@ -403,10 +594,22 @@ Supported: PNG, JPG, JPEG files up to 16MB"""
         }
     }
     
-    # Check for exact matches first
-    for category, data in keyword_responses.items():
+    # Check specific topics before greetings, and match words rather than
+    # arbitrary substrings (for example, "hi" is inside "aphids").
+    category_order = [
+        'aphids', 'whiteflies', 'thrips', 'spider_mites', 'cucumber_beetles',
+        'cutworms', 'downy_mildew', 'powdery_mildew', 'angular_leaf_spot',
+        'anthracnose', 'bacterial_wilt', 'mosaic_virus', 'yellow_leaves',
+        'leaf_holes', 'leaf_curling', 'root_rot', 'organic_treatment',
+        'spray_safety', 'disease_spread', 'diagnosis_help', 'pests', 'treat',
+        'symptom', 'disease', 'prevent', 'upload', 'watering', 'soil',
+        'harvest', 'hello'
+    ]
+    for category in category_order:
+        data = keyword_responses[category]
         for keyword in data['keywords']:
-            if keyword in user_message_lower:
+            pattern = rf'(?<!\w){re.escape(keyword)}(?!\w)'
+            if re.search(pattern, user_message_lower):
                 return data['response']
     
     # Default helpful response
@@ -545,4 +748,3 @@ def chat():
 # ==================== KEEP YOUR EXISTING ROUTES BELOW ====================
 # (All your existing /detect, /batch-detect, etc. routes remain the same)
 # ... [REST OF YOUR EXISTING CODE] ...
-

@@ -2,8 +2,8 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# ⬇️ ADD THIS LINE - Load environment variables from .env file
-load_dotenv()
+# Load backend environment variables regardless of the process working directory.
+load_dotenv(Path(__file__).resolve().parent / '.env')
 
 class Config:
     # Flask configuration
@@ -13,6 +13,11 @@ class Config:
     # ⬇️ ADD THIS - OpenAI API Key
     OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
     GPT_MODEL = os.environ.get('GPT_MODEL', 'gpt-4-turbo')
+
+    # Roboflow pest detection
+    ROBOFLOW_API_URL = os.environ.get('ROBOFLOW_API_URL', 'https://serverless.roboflow.com')
+    ROBOFLOW_API_KEY = os.environ.get('ROBOFLOW_API_KEY')
+    ROBOFLOW_PEST_MODEL_ID = os.environ.get('ROBOFLOW_PEST_MODEL_ID', 'pests-in-cucumber-1cuqt/2')
     
     DEBUG = True
     
